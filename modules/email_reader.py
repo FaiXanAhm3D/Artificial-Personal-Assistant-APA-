@@ -6,6 +6,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from modules.email_writer import send_email
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
@@ -14,6 +15,7 @@ from utils.auth import authenticate
 import base64
 import html
 import re
+
 
 
 def read_emails():
@@ -55,10 +57,27 @@ def read_emails():
         body = html.unescape(body)
         body = re.sub('<.*?>', '', body)
 
+        from modules.email_ai import analyze_email
+
+        analysis = analyze_email(body)
+        
+        summary = analysis["summary"]
+        importance = analysis["importance"]
+        reply = analysis["reply"]
+
         print("\n==============================")
         print(f"📩 From: {sender}")
         print(f"📌 Subject: {subject}")
-        print(f"📝 {body[:300]}")
+        print(f"📌 Summary: {summary}")
+        print(f"⚠️ Importance: {importance}")
+        print(f"✉️ Suggested Reply: {reply}")
+
+        if importance != "Low":
+            choice = input("\nSend reply? (y/n): ").lower()
+
+        if choice == "y":
+            
+            send_email(sender, f"Re: {subject}", reply)
 
 if __name__ == '__main__':
     read_emails()

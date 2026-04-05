@@ -9,31 +9,19 @@ from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-def main():
-    creds = None
+from googleapiclient.discovery import build
+from utils.auth import authenticate
+import base64
+import html
+import re
 
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-
+def read_emails():
+    creds = authenticate()
     service = build('gmail', 'v1', credentials=creds)
 
     results = service.users().messages().list(userId='me', maxResults=5).execute()
     messages = results.get('messages', [])
-
-    if not messages:
-        print("No messages found.")
-        return
 
     for msg in messages:
         msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
@@ -45,9 +33,10 @@ def main():
         sender = ""
 
         for header in headers:
-            if header['name'] == 'Subject':
+            name = header['name'].lower()
+            if name == 'subject':
                 subject = header['value']
-            if header['name'] == 'From':
+            elif name == 'from':
                 sender = header['value']
 
         parts = payload.get("parts")
@@ -62,13 +51,14 @@ def main():
         else:
             data = payload['body']['data']
             body = base64.urlsafe_b64decode(data).decode('utf-8')
-            body = html.unescape(body) # Fix HTML entities (&#39; → ')
-            body = re.sub('<.*?>', '', body) # Remove HTML tags
+
+        body = html.unescape(body)
+        body = re.sub('<.*?>', '', body)
 
         print("\n==============================")
         print(f"📩 From: {sender}")
         print(f"📌 Subject: {subject}")
-        print(f"📝 Summary:\n{body[:300]}")  # limit to first 500 chars
+        print(f"📝 {body[:300]}")
 
 if __name__ == '__main__':
-    main()
+    read_emails()

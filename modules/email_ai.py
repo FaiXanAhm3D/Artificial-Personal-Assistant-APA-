@@ -1,3 +1,7 @@
+from modules.ai.selector import get_ai
+
+ai = get_ai("groq")   # 🔥 switch here anytime
+
 def analyze_email(email_text):
     email_lower = email_text.lower()
 
@@ -8,23 +12,15 @@ def analyze_email(email_text):
     else:
         importance = "Medium"
 
-    summary = email_text.strip().split("\n")[0][:150]
+    summary = ai.summarize(email_text)
 
-    reply = generate_reply(email_text, importance)
+    if importance == "Low" or importance == "Medium":
+        reply = "No reply needed."
+    else:
+        reply = ai.generate_reply(email_text)
 
     return {
         "summary": summary,
         "importance": importance,
         "reply": reply
     }
-
-
-def generate_reply(email_text, importance):
-    if importance == "High":
-        return "Thank you for your email. I have noted the details and will respond promptly."
-
-    elif importance == "Medium":
-        return "Thank you for reaching out. I will review this and get back to you shortly."
-
-    else:
-        return "Thank you for the information."

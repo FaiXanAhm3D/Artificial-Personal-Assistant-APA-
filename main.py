@@ -1,5 +1,9 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from modules.email_reader import read_emails
 from modules.email_writer import send_email
+
 
 
 def main():

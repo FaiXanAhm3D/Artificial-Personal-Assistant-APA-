@@ -26,6 +26,7 @@ def main():
 
         elif choice == "3":
             print("Exiting...")
+            print("Have a great day!")
             break
 
         else:

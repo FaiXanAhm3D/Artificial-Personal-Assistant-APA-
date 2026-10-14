@@ -1,0 +1,15 @@
+[project]
+name = "project-apa"
+version = "0.2.0"
+description = "Artificial Personal Assistant (APA)"
+authors = [{ name = "Faizan Ahmed" }]
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.10.0,<3.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0,<10.0.0",
+]

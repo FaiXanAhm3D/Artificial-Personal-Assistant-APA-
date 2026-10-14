@@ -1,8 +1,73 @@
-# Secrets
+# ==========================================
+# Credentials, OAuth Tokens & Local Secrets
+# ==========================================
 credentials.json
+**/credentials.json
 token.json
+**/token.json
+token.pickle
+**/token.pickle
 .env
+**/.env
+*.pem
+*.key
+client_secret*.json
 
-# Python
+# Whitelist configuration template
+!.env.example
+!**/.env.example
+
+# ==========================================
+# Python Runtime, Bytecode & Caches
+# ==========================================
 __pycache__/
-*.pyc
+**/__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==========================================
+# Virtual Environments
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+
+# ==========================================
+# Machine Learning Model Weights & Artifacts
+# (Preserves application models code in app/models)
+# ==========================================
+*.gguf
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.h5
+model_weights/
+model_cache/
+.cache/
+!**/models/*.py
+!**/app/models/**
+!**/backend/app/models/**
+
+# ==========================================
+# Logs & Local Databases
+# ==========================================
+*.log
+logs/
+*.sqlite
+*.sqlite3
+*.db
+
+# ==========================================
+# IDE & Operating System Artifacts
+# ==========================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

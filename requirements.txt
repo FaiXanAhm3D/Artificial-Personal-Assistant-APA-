@@ -13,4 +13,7 @@ google-auth-oauthlib>=1.2.0,<2.0.0
 # HTTP Client for Local Inference
 requests>=2.30.0,<3.0.0
 
-
+# FastAPI REST Service & ASGI Server
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.30.0,<1.0.0
+httpx>=0.27.0,<1.0.0

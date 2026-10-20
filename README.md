@@ -104,3 +104,42 @@ Project APA includes a comprehensive automated test suite with synthetic fixture
 ```bash
 pytest backend/tests -v
 ```
+
+---
+
+## Local REST API Service
+
+Project APA provides a strictly read-only local REST API powered by FastAPI and Uvicorn.
+
+### 1. Launching the API Server
+
+The API server strictly requires loopback binding (`127.0.0.1` or `localhost`) and refuses to bind to external or public network interfaces:
+
+```bash
+# Using the module runner (default: 127.0.0.1:8000):
+python -m backend.app.main
+
+# Or via Uvicorn directly:
+uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+Interactive OpenAPI Swagger UI is available locally at:
+```
+http://127.0.0.1:8000/docs
+```
+
+### 2. Available Endpoints
+
+| Method | Endpoint | Description | Privacy / Security Behavior |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/health` | Service liveness and metadata | Returns status, version, and AI provider. Excludes machine info and credentials state. |
+| `GET` | `/emails` | List recent email metadata (`?limit=5&query=...`) | Returns structured summaries. Full email bodies are omitted to minimize memory and privacy exposure. |
+| `GET` | `/emails/{email_id}` | Full email details | Returns complete email metadata and extracted plain-text and HTML bodies. |
+| `POST` | `/emails/{email_id}/analyze` | Local AI triage and summary (`?provider=offline`) | Evaluates importance and produces a factual summary using local heuristics or local Ollama. |
+
+### 3. Security, CORS, and Privacy Limitations
+
+- **Loopback-Only Binding:** The server strictly enforces binding to `127.0.0.1`. Attempts to run with `--host 0.0.0.0` or external network addresses trigger an immediate security exception.
+- **Strict Read-Only Operations:** The API exposes zero endpoints for sending, modifying, deleting, archiving, or labeling emails.
+- **Zero Cloud AI Leakage:** Analysis requests route solely through the deterministic offline heuristic (`OfflineRuleBasedProvider`) or loopback Ollama (`LocalLLMProvider`). Cloud providers (Groq, Gemini, OpenAI) are strictly prohibited.
+- **CORS Policy:** Permissive CORS (`*`) is deliberately disabled. Explicit origins (`http://127.0.0.1:3000`, `http://localhost:3000`) are pre-configured for future local desktop/browser frontends.

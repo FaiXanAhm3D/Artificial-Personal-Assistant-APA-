@@ -16,6 +16,7 @@ Decoupled from AI inference and CLI presentation. Anchored to central settings.
 import base64
 import binascii
 import html
+import logging
 import os
 from email.mime.text import MIMEText
 from html.parser import HTMLParser
@@ -30,6 +31,8 @@ from googleapiclient.errors import HttpError
 
 from backend.app.core.config import Settings, get_settings
 from backend.app.domain.models import EmailMessage
+
+logger = logging.getLogger(__name__)
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -219,6 +222,14 @@ def parse_gmail_message(message: Dict[str, Any]) -> EmailMessage:
     )
 
 
+class AuthenticationRequiredError(RuntimeError):
+    """
+    Raised when Gmail authentication is required but interactive authentication
+    flows are disabled (e.g. in headless, non-interactive, or API execution contexts).
+    """
+    pass
+
+
 class GmailService:
     """
     Handles all interactions with the Gmail API, abstracting network operations
@@ -232,6 +243,7 @@ class GmailService:
         token_path: Optional[str | Path] = None,
         scopes: Optional[List[str]] = None,
         service: Optional[Any] = None,
+        interactive: bool = True,
     ):
         self.settings = settings or get_settings()
         self.credentials_path = str(
@@ -242,30 +254,57 @@ class GmailService:
         )
         self.scopes = scopes or self.settings.gmail_scopes
         self._service: Optional[Resource] = service
+        self.interactive = interactive
 
-    def authenticate(self) -> None:
+    def authenticate(self, interactive: Optional[bool] = None) -> None:
         """
         Authenticates with Gmail using OAuth2.
 
         Loads cached credentials from token_path if present and valid,
         refreshes them if expired, or runs the interactive OAuth flow
-        if no valid credentials exist. Builds the underlying Gmail API
-        client and stores it on self._service.
+        if no valid credentials exist and interactive mode is enabled.
+        Builds the underlying Gmail API client and stores it on self._service.
+
+        Args:
+            interactive: Whether interactive browser login is permitted.
+                         Defaults to self.interactive if None.
+
+        Raises:
+            AuthenticationRequiredError: If credentials/token are missing or
+                                         invalid and interactive mode is disabled.
+            FileNotFoundError: If credentials_path does not exist in interactive mode.
         """
         creds: Optional[Credentials] = None
+        is_interactive = self.interactive if interactive is None else interactive
 
         if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_file(self.token_path, self.scopes)
+            try:
+                creds = Credentials.from_authorized_user_file(self.token_path, self.scopes)
+            except Exception as err:
+                logger.warning("Failed to load credentials from token file: %s", err)
+                creds = None
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception as err:
+                    logger.warning("Failed to refresh Gmail token: %s", err)
+                    creds = None
+
+            if not creds or not creds.valid:
                 if not os.path.exists(self.credentials_path):
                     raise FileNotFoundError(
                         f"OAuth client credentials file not found at: '{self.credentials_path}'. "
                         f"Please place your 'credentials.json' from Google Cloud Console at this location."
                     )
+
+                if not is_interactive:
+                    raise AuthenticationRequiredError(
+                        "Gmail authentication required. Interactive authentication is disabled in this context. "
+                        "Please run 'python main.py' to authenticate."
+                    )
+
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_path, self.scopes
                 )

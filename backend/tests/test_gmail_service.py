@@ -14,7 +14,7 @@ Tests verify:
 
 import base64
 from typing import Any, Dict
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from googleapiclient.errors import HttpError
@@ -22,6 +22,7 @@ from googleapiclient.errors import HttpError
 from backend.app.core.config import Settings
 from backend.app.domain.models import EmailMessage
 from backend.app.services.gmail_service import (
+    AuthenticationRequiredError,
     GmailService,
     HTMLTextExtractor,
     decode_base64_url_safe,
@@ -514,3 +515,151 @@ def test_parse_message_convenience_static_method():
     assert isinstance(result, EmailMessage)
     assert result.id == "static_01"
     assert result.body_text == "Testing static parse"
+
+
+# ----------------------------------------------------------------------
+# 4. GmailService Authentication & Non-Interactive Flow Tests (F-01)
+# ----------------------------------------------------------------------
+
+
+def test_authenticate_noninteractive_missing_token_raises_auth_required(tmp_path):
+    """Non-interactive authenticate() must fail fast with AuthenticationRequiredError when token is missing."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.write_text('{"installed": {"client_id": "dummy"}}', encoding="utf-8")
+    token_file = tmp_path / "token.json"  # Does not exist
+
+    service = GmailService(
+        credentials_path=creds_file,
+        token_path=token_file,
+        interactive=False,
+    )
+
+    with patch("backend.app.services.gmail_service.InstalledAppFlow") as mock_flow:
+        with pytest.raises(AuthenticationRequiredError, match="Gmail authentication required"):
+            service.authenticate()
+        mock_flow.from_client_secrets_file.assert_not_called()
+
+
+def test_authenticate_noninteractive_override_in_method_call(tmp_path):
+    """Passing interactive=False to authenticate() overrides instance setting and fails fast."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.write_text('{"installed": {"client_id": "dummy"}}', encoding="utf-8")
+    token_file = tmp_path / "token.json"
+
+    service = GmailService(
+        credentials_path=creds_file,
+        token_path=token_file,
+        interactive=True,  # Instance says True
+    )
+
+    with patch("backend.app.services.gmail_service.InstalledAppFlow") as mock_flow:
+        with pytest.raises(AuthenticationRequiredError, match="Interactive authentication is disabled"):
+            service.authenticate(interactive=False)  # Override says False
+        mock_flow.from_client_secrets_file.assert_not_called()
+
+
+def test_authenticate_noninteractive_expired_token_refresh_failure(tmp_path):
+    """When cached token is expired and refresh fails, non-interactive mode raises AuthenticationRequiredError."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.write_text('{"installed": {"client_id": "dummy"}}', encoding="utf-8")
+    token_file = tmp_path / "token.json"
+    token_file.write_text('{"token": "dummy_token"}', encoding="utf-8")
+
+    service = GmailService(
+        credentials_path=creds_file,
+        token_path=token_file,
+        interactive=False,
+    )
+
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = "some_refresh_token"
+    mock_creds.refresh.side_effect = RuntimeError("Refresh token revoked or offline")
+
+    with patch("backend.app.services.gmail_service.Credentials.from_authorized_user_file", return_value=mock_creds):
+        with patch("backend.app.services.gmail_service.InstalledAppFlow") as mock_flow:
+            with pytest.raises(AuthenticationRequiredError, match="Gmail authentication required"):
+                service.authenticate()
+            mock_flow.from_client_secrets_file.assert_not_called()
+
+
+def test_authenticate_noninteractive_expired_token_refresh_success(tmp_path):
+    """When cached token is expired and refresh succeeds, non-interactive mode refreshes silently without browser."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.write_text('{"installed": {"client_id": "dummy"}}', encoding="utf-8")
+    token_file = tmp_path / "token.json"
+    token_file.write_text('{"token": "expired_token"}', encoding="utf-8")
+
+    service = GmailService(
+        credentials_path=creds_file,
+        token_path=token_file,
+        interactive=False,
+    )
+
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = "usable_refresh_token"
+    mock_creds.to_json.return_value = '{"token": "refreshed_access_token"}'
+
+    def do_refresh(request):
+        mock_creds.valid = True
+        mock_creds.expired = False
+
+    mock_creds.refresh.side_effect = do_refresh
+
+    with patch("backend.app.services.gmail_service.Credentials.from_authorized_user_file", return_value=mock_creds):
+        with patch("backend.app.services.gmail_service.InstalledAppFlow") as mock_flow:
+            with patch("backend.app.services.gmail_service.build") as mock_build:
+                service.authenticate()
+                mock_creds.refresh.assert_called_once()
+                mock_flow.from_client_secrets_file.assert_not_called()
+                mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)
+
+    assert token_file.exists()
+    assert token_file.read_text(encoding="utf-8") == '{"token": "refreshed_access_token"}'
+    assert service._service is not None
+
+
+def test_authenticate_interactive_launches_oauth_flow_when_token_missing(tmp_path):
+    """Interactive mode (default CLI behavior) runs InstalledAppFlow when token is missing."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.write_text('{"installed": {"client_id": "dummy"}}', encoding="utf-8")
+    token_file = tmp_path / "token.json"
+
+    service = GmailService(
+        credentials_path=creds_file,
+        token_path=token_file,
+        interactive=True,
+    )
+
+    mock_flow_instance = MagicMock()
+    mock_obtained_creds = MagicMock()
+    mock_obtained_creds.to_json.return_value = '{"token": "newly_obtained_token"}'
+    mock_flow_instance.run_local_server.return_value = mock_obtained_creds
+
+    with patch("backend.app.services.gmail_service.InstalledAppFlow.from_client_secrets_file", return_value=mock_flow_instance) as mock_from_secrets:
+        with patch("backend.app.services.gmail_service.build") as mock_build:
+            service.authenticate()
+            mock_from_secrets.assert_called_once_with(str(creds_file), service.scopes)
+            mock_flow_instance.run_local_server.assert_called_once_with(port=0)
+            mock_build.assert_called_once_with("gmail", "v1", credentials=mock_obtained_creds)
+
+    assert token_file.exists()
+    assert token_file.read_text(encoding="utf-8") == '{"token": "newly_obtained_token"}'
+
+
+def test_authenticate_missing_credentials_file_raises_filenotfound(tmp_path):
+    """When credentials.json is missing and no token exists, FileNotFoundError is raised."""
+    missing_creds = tmp_path / "nonexistent_credentials.json"
+    missing_token = tmp_path / "nonexistent_token.json"
+
+    service = GmailService(
+        credentials_path=missing_creds,
+        token_path=missing_token,
+        interactive=True,
+    )
+
+    with pytest.raises(FileNotFoundError, match="OAuth client credentials file not found"):
+        service.authenticate()

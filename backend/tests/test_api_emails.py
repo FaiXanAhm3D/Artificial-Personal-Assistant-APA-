@@ -26,7 +26,10 @@ from backend.app.core.config import Settings
 from backend.app.domain.models import EmailAnalysis, EmailMessage, ImportanceLevel
 from backend.app.main import app, run
 from backend.app.services.ai_service import AIService
-from backend.app.services.gmail_service import GmailService
+from backend.app.services.gmail_service import (
+    AuthenticationRequiredError,
+    GmailService,
+)
 
 
 @pytest.fixture
@@ -401,7 +404,7 @@ def test_loopback_validation_rejects_external_hosts():
 
 
 def test_get_gmail_service_enforces_readonly_scope(mock_settings: Settings):
-    """Dependency provider get_gmail_service must strictly enforce read-only OAuth scope."""
+    """Dependency provider get_gmail_service must strictly enforce read-only OAuth scope and non-interactive auth."""
     broad_settings = mock_settings.model_copy(
         update={
             "gmail_scopes": [
@@ -412,6 +415,7 @@ def test_get_gmail_service_enforces_readonly_scope(mock_settings: Settings):
     )
     service = get_gmail_service(settings=broad_settings)
     assert service.scopes == ["https://www.googleapis.com/auth/gmail.readonly"]
+    assert service.interactive is False
 
 
 def test_cors_preflight_permitted_and_untrusted_origins(client: TestClient):
@@ -459,3 +463,80 @@ def test_whitespace_email_id_rejected_with_bad_request(client: TestClient):
     res_post = client.post("/emails/%20%20/analyze")
     assert res_post.status_code == 400
     assert "invalid email id" in res_post.json()["detail"].lower()
+
+
+# ====================================================================== #
+# 6. Fail-Fast Non-Interactive Authentication Tests (F-01)
+# ====================================================================== #
+
+
+def test_list_emails_auth_required_error(client: TestClient):
+    """GET /emails returns 401 Unauthorized when interactive auth is required."""
+    mock_gmail = MagicMock(spec=GmailService)
+    mock_gmail.get_emails.side_effect = AuthenticationRequiredError(
+        "Gmail authentication required. Interactive authentication is disabled in this context."
+    )
+    app.dependency_overrides[get_gmail_service] = lambda: mock_gmail
+
+    response = client.get("/emails")
+    assert response.status_code == 401
+    data = response.json()
+    assert "authentication required" in data["detail"].lower()
+    assert "offline cli" in data["detail"].lower()
+
+
+def test_get_email_detail_auth_required_error(client: TestClient):
+    """GET /emails/{email_id} returns 401 Unauthorized when interactive auth is required."""
+    mock_gmail = MagicMock(spec=GmailService)
+    mock_gmail.get_email.side_effect = AuthenticationRequiredError(
+        "Gmail authentication required. Interactive authentication is disabled in this context."
+    )
+    app.dependency_overrides[get_gmail_service] = lambda: mock_gmail
+
+    response = client.get("/emails/msg_101")
+    assert response.status_code == 401
+    data = response.json()
+    assert "authentication required" in data["detail"].lower()
+    assert "offline cli" in data["detail"].lower()
+
+
+def test_analyze_email_auth_required_error(client: TestClient):
+    """POST /emails/{email_id}/analyze returns 401 Unauthorized when interactive auth is required."""
+    mock_gmail = MagicMock(spec=GmailService)
+    mock_gmail.get_email.side_effect = AuthenticationRequiredError(
+        "Gmail authentication required. Interactive authentication is disabled in this context."
+    )
+    app.dependency_overrides[get_gmail_service] = lambda: mock_gmail
+
+    response = client.post("/emails/msg_101/analyze")
+    assert response.status_code == 401
+    data = response.json()
+    assert "authentication required" in data["detail"].lower()
+    assert "offline cli" in data["detail"].lower()
+
+
+def test_api_unauthenticated_without_mocks_fails_fast_with_401(tmp_path):
+    """When real get_gmail_service is invoked without cached token, request fails fast with 401 (no browser)."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.write_text('{"installed": {"client_id": "dummy"}}', encoding="utf-8")
+    token_file = tmp_path / "token.json"
+
+    test_settings = Settings(
+        gmail_credentials_file=str(creds_file),
+        gmail_token_file=str(token_file),
+        ai_provider="offline",
+    )
+
+    app.dependency_overrides[get_current_settings] = lambda: test_settings
+    try:
+        with TestClient(app) as live_client:
+            response = live_client.get("/emails")
+            assert response.status_code == 401
+            data = response.json()
+            assert "authentication required" in data["detail"].lower()
+            assert "offline cli" in data["detail"].lower()
+            # Ensure no local file paths or secrets leaked in detail
+            assert str(creds_file) not in data["detail"]
+            assert str(token_file) not in data["detail"]
+    finally:
+        app.dependency_overrides.clear()

@@ -35,7 +35,10 @@ from backend.app.core.config import Settings
 from backend.app.domain.models import EmailMessage
 from backend.app.services.ai.factory import get_ai_provider
 from backend.app.services.ai_service import AIService
-from backend.app.services.gmail_service import GmailService
+from backend.app.services.gmail_service import (
+    AuthenticationRequiredError,
+    GmailService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,12 @@ def list_emails(
         messages: List[EmailMessage] = gmail_service.get_emails(
             query=query,
             max_results=limit,
+        )
+    except AuthenticationRequiredError:
+        logger.warning("Gmail authentication required during list_emails request.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Gmail authentication required. Please authenticate using the offline CLI.",
         )
     except FileNotFoundError:
         logger.warning("Gmail credentials file missing during list_emails request.")
@@ -135,6 +144,12 @@ def get_email_detail(
 
     try:
         msg: Optional[EmailMessage] = gmail_service.get_email(clean_id)
+    except AuthenticationRequiredError:
+        logger.warning("Gmail authentication required during get_email_detail.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Gmail authentication required. Please authenticate using the offline CLI.",
+        )
     except FileNotFoundError:
         logger.warning("Gmail credentials file missing during get_email_detail.")
         raise HTTPException(
@@ -253,6 +268,12 @@ def analyze_email_endpoint(
     # 2. Fetch the target message
     try:
         msg: Optional[EmailMessage] = gmail_service.get_email(clean_id)
+    except AuthenticationRequiredError:
+        logger.warning("Gmail authentication required during analyze_email.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Gmail authentication required. Please authenticate using the offline CLI.",
+        )
     except FileNotFoundError:
         logger.warning("Gmail credentials file missing during analyze_email.")
         raise HTTPException(

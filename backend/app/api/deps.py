@@ -25,11 +25,12 @@ def get_gmail_service(
 ) -> GmailService:
     """
     Dependency provider for GmailService.
-    Always enforces read-only scope for API routes.
+    Always enforces read-only scope and non-interactive authentication for API routes.
     """
     return GmailService(
         settings=settings,
         scopes=[GMAIL_READONLY_SCOPE],
+        interactive=False,
     )
 
 
